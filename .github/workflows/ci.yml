@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Fetch JSC prebuilt
-        shell: ${{ matrix.shell }}
+        shell: bash
         run: |
           bash scripts/fetch_jsc.sh ${{ matrix.jsc_target }}
 
