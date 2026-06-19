@@ -1,0 +1,11 @@
+{
+  "packageManager": "npm",
+  "userun": false,
+  "autocomplete": false,
+  "testing": "vitest",
+  "http": false,
+  "enableOtherLangs": false,
+  "runtimes": {
+    "build": "tsc"
+  }
+}

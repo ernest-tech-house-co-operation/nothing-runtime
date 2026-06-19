@@ -1,0 +1,91 @@
+# .github/workflows/ci.yml
+#
+# Continuous integration — runs on every push and pull request to verify
+# that the build doesn't regress on Linux and Windows. Does NOT create
+# releases — use the "Release" workflow (Actions → Release → Run workflow)
+# for that.
+
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & smoke-test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            jsc_target: linux-amd64
+            shell: bash
+          - os: windows-latest
+            jsc_target: windows-amd64
+            shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch JSC prebuilt
+        shell: ${{ matrix.shell }}
+        run: |
+          bash scripts/fetch_jsc.sh ${{ matrix.jsc_target }}
+
+      - name: Build (Linux)
+        if: runner.os != 'Windows'
+        run: |
+          bash scripts/build.sh build/nth
+          chmod +x build/nth
+
+      - name: Set up MSVC Developer PowerShell
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\scripts\build.ps1 -OutPath build\nth.exe
+
+      - name: Smoke-test (Linux)
+        if: runner.os != 'Windows'
+        run: |
+          ./build/nth --version
+          ./build/nth --help | head -5
+          cd examples && ../build/nth hello.js
+          ../build/nth hel           # prefix-match
+          ../build/nth modules/main.js
+          ../build/nth -1 chain_a.js -success -2 chain_b.js
+
+      - name: Smoke-test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\build\nth.exe --version
+          .\build\nth.exe --help | Select-Object -First 5
+          Push-Location examples
+          ..\build\nth.exe hello.js
+          ..\build\nth.exe hel
+          ..\build\nth.exe modules\main.js
+          ..\build\nth.exe -1 chain_a.js -success -2 chain_b.js
+          Pop-Location
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nth-${{ matrix.os }}
+          path: |
+            build/nth
+            build/nth.exe
+          if-no-files-found: ignore
+          retention-days: 7

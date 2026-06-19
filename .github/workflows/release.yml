@@ -1,0 +1,137 @@
+# .github/workflows/release.yml
+#
+# Manual-trigger release builder for `nth`. Produces Linux + Windows
+# binaries and publishes them as a GitHub Release.
+#
+# How to use:
+#   1. Go to the GitHub repo's Actions tab.
+#   2. Select the "Release" workflow in the left sidebar.
+#   3. Click "Run workflow" (top right).
+#   4. Enter the version tag you want to publish (e.g. v0.1.1) and
+#      click the green "Run workflow" button.
+#
+# The workflow will:
+#   - Build nth on Ubuntu (linux-amd64) and Windows (windows-amd64)
+#   - Upload each binary as a separate workflow artifact
+#   - Create a Git tag matching the version input
+#   - Create a GitHub Release with both binaries attached and
+#     auto-generated release notes
+#
+# This workflow does NOT run on push — only via the manual "Run workflow"
+# button (workflow_dispatch). See ci.yml for push/PR-triggered builds.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to publish (e.g. v0.1.1)'
+        required: true
+        default: 'v0.1.1'
+      prerelease:
+        description: 'Mark as a pre-release?'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # needed by softprops/action-gh-release to create the release
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            jsc_target: linux-amd64
+            asset_name: nth-linux-amd64
+            out_path: build/nth
+            shell: bash
+          - os: windows-latest
+            jsc_target: windows-amd64
+            asset_name: nth-windows-amd64.exe
+            out_path: build\nth.exe
+            shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch JSC prebuilt
+        shell: ${{ matrix.shell }}
+        run: |
+          bash scripts/fetch_jsc.sh ${{ matrix.jsc_target }}
+
+      - name: Build (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          bash scripts/build.sh build/nth
+          chmod +x build/nth
+          # Smoke-test
+          ./build/nth --version
+          cd examples && ../build/nth hello.js
+
+      - name: Set up MSVC Developer PowerShell
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\scripts\build.ps1 -OutPath build\nth.exe
+          # Smoke-test
+          .\build\nth.exe --version
+          Push-Location examples
+          ..\build\nth.exe hello.js
+          Pop-Location
+
+      - name: Package artifact
+        shell: ${{ matrix.shell }}
+        run: |
+          mkdir -p staging
+          cp ${{ matrix.out_path }} staging/${{ matrix.asset_name }}
+          # Include README and BUILD.md alongside the binary for
+          # users who download it without cloning the repo.
+          cp README.md BUILD.md staging/
+          cp -r examples staging/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: staging/
+          retention-days: 30
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded artifacts
+        run: find artifacts -type f | sort
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: ${{ github.event.inputs.version }}
+          generate_release_notes: true
+          prerelease: ${{ github.event.inputs.prerelease }}
+          files: |
+            artifacts/nth-linux-amd64/*
+            artifacts/nth-windows-amd64.exe/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
